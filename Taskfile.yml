@@ -1,0 +1,51 @@
+# https://taskfile.dev — works on macOS, Linux, and Windows.
+# Install: https://taskfile.dev/installation/
+#
+# Requires: Node.js 25.x (see .nvmrc), npm, Go 1.26.2 (see go.mod toolchain)
+#
+#   task           — build frontend (web/dist) + Go binary (bin/server[.exe])
+#   task build     — same as default
+#   task run       — build then start server (PORT env optional, default 8080)
+#   task clean     — remove bin/ and web/dist
+
+version: '3'
+
+vars:
+  SERVER_BIN: '{{if eq OS "windows"}}bin/server.exe{{else}}bin/server{{end}}'
+
+tasks:
+  default:
+    desc: Build frontend and Go binary
+    cmds:
+      - task: build
+
+  build:
+    desc: Build static assets then compile server (order matters for embed)
+    cmds:
+      - task: frontend
+      - task: go-binary
+
+  frontend:
+    desc: npm install + vite build → web/dist
+    dir: web
+    cmds:
+      - npm install
+      - npm run build
+
+  go-binary:
+    desc: Compile cmd/server with embedded web/dist
+    cmds:
+      - go build -trimpath -ldflags="-s -w" -o {{.SERVER_BIN}} ./cmd/server
+
+  run:
+    desc: Build then run the server
+    cmds:
+      - task: build
+      - '{{.SERVER_BIN}}'
+
+  clean:
+    desc: Remove bin/ and web/dist (Node required for portable delete)
+    cmds:
+      - >
+        node -e "const fs=require('fs');
+        ['bin','web/dist'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch(e){}})"
