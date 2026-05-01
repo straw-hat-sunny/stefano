@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"ai-assistant/internal/chat"
 	"ai-assistant/internal/model"
 	"ai-assistant/web"
 
@@ -30,6 +31,7 @@ func main() {
 	r.HandleFunc("/api/health", health).Methods(http.MethodGet)
 	r.HandleFunc("/api/models", models.HandleList).Methods(http.MethodGet)
 	r.HandleFunc("/api/model", models.HandleSelect).Methods(http.MethodPost)
+	r.HandleFunc("/api/chat/message", chat.HandleMessage).Methods(http.MethodPost)
 	r.PathPrefix("/").Handler(staticAndSPA(distFS))
 
 	log.Printf("listening on :%s", port)

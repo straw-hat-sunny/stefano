@@ -11,3 +11,7 @@ export interface ChatSession {
   title: string;
   messages: Message[];
 }
+
+export type ChatMessageResponse = {
+  message: Message;
+};

@@ -10,11 +10,10 @@ import {
 import type { ListChildComponentProps } from 'react-window';
 import { FixedSizeList } from 'react-window';
 import styles from './App.module.css';
-import type { ChatSession, Message } from './types';
+import type { ChatMessageResponse, ChatSession, Message } from './types';
 import type { ModelOption, ModelsListResponse } from './models';
 
 const SESSION_ROW_HEIGHT = 44;
-const MOCK_REPLY_MS = 720;
 
 function id(): string {
   return crypto.randomUUID();
@@ -61,11 +60,12 @@ export default function App() {
   const [draft, setDraft] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const listWrapRef = useRef<HTMLDivElement>(null);
   const [listHeight, setListHeight] = useState(320);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const replyTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeId) ?? null,
@@ -93,7 +93,7 @@ export default function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [activeSession?.messages]);
+  }, [activeSession?.messages, pendingSessionId]);
 
   useEffect(() => {
     if (!sidebarOpen || !isMobile) return;
@@ -103,12 +103,6 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [sidebarOpen, isMobile]);
-
-  useEffect(() => {
-    return () => {
-      replyTimeouts.current.forEach(clearTimeout);
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,11 +168,13 @@ export default function App() {
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || !activeId) return;
+    if (!trimmed || !activeId || pendingSessionId !== null) return;
 
     const sessionId = activeId;
     const userMsg: Message = { id: id(), role: 'user', content: trimmed };
     setDraft('');
+    setSendError(null);
+    setPendingSessionId(sessionId);
 
     setSessions((prev) =>
       prev.map((s) => {
@@ -192,15 +188,49 @@ export default function App() {
       })
     );
 
-    const t = setTimeout(() => {
-      appendAssistantReply(sessionId, {
-        id: id(),
-        role: 'assistant',
-        content: `(${models.find((m) => m.id === model)?.label ?? model}) This is a demo reply. Hook up your backend to stream real responses.`,
-      });
-    }, MOCK_REPLY_MS);
-    replyTimeouts.current.push(t);
-  }, [draft, activeId, model, models, appendAssistantReply]);
+    void (async () => {
+      try {
+        const res = await fetch('/api/chat/message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: trimmed, modelId: model }),
+        });
+        if (!res.ok) {
+          let msg = `Request failed (${res.status})`;
+          try {
+            const errBody = (await res.json()) as { error?: string };
+            if (typeof errBody.error === 'string' && errBody.error) {
+              msg = errBody.error;
+            }
+          } catch {
+            /* ignore */
+          }
+          setSendError(msg);
+          return;
+        }
+        const data = (await res.json()) as ChatMessageResponse;
+        const m = data.message;
+        if (
+          !m ||
+          typeof m.id !== 'string' ||
+          m.role !== 'assistant' ||
+          typeof m.content !== 'string'
+        ) {
+          setSendError('Invalid response from server.');
+          return;
+        }
+        appendAssistantReply(sessionId, {
+          id: m.id,
+          role: 'assistant',
+          content: m.content,
+        });
+      } catch {
+        setSendError('Could not reach the server.');
+      } finally {
+        setPendingSessionId((cur) => (cur === sessionId ? null : cur));
+      }
+    })();
+  }, [draft, activeId, pendingSessionId, model, appendAssistantReply]);
 
   const handleModelChange = useCallback(async (nextId: string) => {
     const prev = model;
@@ -334,6 +364,15 @@ export default function App() {
               </div>
             </div>
           ))}
+          {activeSession && pendingSessionId === activeSession.id ? (
+            <div className={`${styles.bubbleRow} ${styles.bubbleRowAssistant}`}>
+              <div
+                className={`${styles.bubble} ${styles.bubbleAssistant} ${styles.bubbleThinking}`}
+              >
+                ...
+              </div>
+            </div>
+          ) : null}
           <div ref={messagesEndRef} />
         </main>
 
@@ -348,15 +387,21 @@ export default function App() {
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDownDraft}
               aria-label="Chat message"
+              disabled={pendingSessionId !== null}
             />
             <button
               type="button"
               className={styles.send}
               onClick={handleSend}
-              disabled={!draft.trim() || !activeId}
+              disabled={!draft.trim() || !activeId || pendingSessionId !== null}
             >
               Send
             </button>
+            {sendError ? (
+              <span className={styles.sendError} role="alert">
+                {sendError}
+              </span>
+            ) : null}
             <div className={styles.modelRow}>
               <label htmlFor="model-select" className={styles.modelLabel}>
                 Model

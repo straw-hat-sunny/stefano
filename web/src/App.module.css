@@ -220,6 +220,11 @@
   border: 1px solid var(--border);
 }
 
+.bubbleThinking {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .bubbleUser {
   background: var(--accent);
   color: var(--accent-text);
@@ -297,9 +302,17 @@
     min-height: 44px;
   }
 
+  .sendError {
+    grid-row: 2;
+  }
+
   .modelRow {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .footerGrid:has(.sendError) .modelRow {
+    grid-row: 3;
   }
 }
 
@@ -324,6 +337,12 @@
   cursor: pointer;
 }
 
+.sendError {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: #b91c1c;
+}
+
 .modelError {
   font-size: 12px;
   flex-basis: 100%;
@@ -331,6 +350,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
+  .sendError,
   .modelError {
     color: #fca5a5;
   }
@@ -350,8 +370,16 @@
     grid-row: 2;
   }
 
+  .sendError {
+    grid-row: 3;
+  }
+
   .modelRow {
     grid-column: 1 / -1;
     grid-row: 3;
+  }
+
+  .footerGrid:has(.sendError) .modelRow {
+    grid-row: 4;
   }
 }
