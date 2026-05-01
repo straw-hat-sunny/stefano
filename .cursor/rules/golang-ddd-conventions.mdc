@@ -1,0 +1,234 @@
+---
+description: Idiomatic Golang Domain-Driven Design (DDD) standards
+globs: "**/*.go, go.mod, go.sum"
+alwaysApply: true
+---
+
+# Golang Domain-Driven Design (DDD)
+
+## General Principles
+
+- Model the domain, not the database.
+- Keep business logic inside the domain layer.
+- Favor explicitness and clarity over abstraction.
+- Use composition over inheritance (Go idioms).
+- Design for testability and maintainability.
+
+---
+
+## Project Structure
+
+Organize code by domain, not by technical concern:
+
+```text
+/internal
+  /user
+    entity.go
+    value_object.go
+    repository.go
+    service.go
+  /order
+    entity.go
+    repository.go
+    service.go
+  /shared
+    errors.go
+    utils.go
+/cmd
+  /api
+    main.go
+```
+
+- `internal/` contains application code.
+- `cmd/` contains entry points.
+- Each domain is self-contained.
+
+---
+
+## Layers
+
+### Domain Layer (Core)
+
+- Contains: entities, value objects, domain services, repository interfaces.
+- Must NOT depend on infrastructure or frameworks.
+
+### Application Layer
+
+- Orchestrates use cases.
+- Handles transactions and coordination.
+- Calls domain services and entities.
+
+### Infrastructure Layer
+
+- Implements repositories (DB, APIs) and external services.
+- Depends on domain interfaces only.
+
+---
+
+## Entities
+
+- Represent core business objects with identity.
+- Use structs with methods; keep invariants inside methods; avoid exposing mutable state directly.
+
+```go
+type User struct {
+    ID    string
+    Email string
+}
+
+func (u *User) ChangeEmail(email string) error {
+    if email == "" {
+        return ErrInvalidEmail
+    }
+    u.Email = email
+    return nil
+}
+```
+
+---
+
+## Value Objects
+
+- Immutable and defined by value, not identity.
+- No side effects; validate on creation.
+
+```go
+type Email string
+
+func NewEmail(value string) (Email, error) {
+    if value == "" {
+        return "", ErrInvalidEmail
+    }
+    return Email(value), nil
+}
+```
+
+---
+
+## Repositories
+
+- Define interfaces in the domain layer.
+- Implement in the infrastructure layer.
+- Do NOT leak DB models into domain.
+
+```go
+type UserRepository interface {
+    Save(ctx context.Context, user *User) error
+    FindByID(ctx context.Context, id string) (*User, error)
+}
+```
+
+---
+
+## Services
+
+### Domain Services
+
+- Contain domain logic that does not belong to a single entity.
+
+```go
+type UserService struct {
+    repo UserRepository
+}
+
+func (s *UserService) Register(ctx context.Context, email Email) (*User, error) {
+    user := &User{
+        ID:    uuid.NewString(),
+        Email: string(email),
+    }
+    return user, s.repo.Save(ctx, user)
+}
+```
+
+### Application Services
+
+- Coordinate workflows and use cases.
+- Handle transactions and side effects.
+
+---
+
+## Error Handling
+
+- Use explicit error values; wrap errors with context when needed; avoid panic for business logic.
+
+```go
+var ErrInvalidEmail = errors.New("invalid email")
+```
+
+---
+
+## Interfaces
+
+- Define interfaces where they are used (consumer side).
+- Keep them small and focused.
+
+---
+
+## Dependency Injection
+
+- Prefer constructor injection; avoid global state.
+
+```go
+func NewUserService(repo UserRepository) *UserService {
+    return &UserService{repo: repo}
+}
+```
+
+---
+
+## Persistence
+
+- Keep DB models separate from domain models.
+- Map between persistence and domain explicitly.
+
+---
+
+## Testing
+
+- Test domain logic without external dependencies.
+- Use mocks for repositories in application layer tests.
+- Favor table-driven tests.
+
+```go
+func TestNewEmail(t *testing.T) {
+    tests := []struct {
+        input   string
+        wantErr bool
+    }{
+        {"test@example.com", false},
+        {"", true},
+    }
+
+    for _, tt := range tests {
+        _, err := NewEmail(tt.input)
+        if (err != nil) != tt.wantErr {
+            t.Errorf("unexpected result")
+        }
+    }
+}
+```
+
+---
+
+## Naming Conventions
+
+- Use clear, domain-specific names.
+- Avoid generic names like `Manager`, `Helper`, `Util`.
+- Package names should be short and meaningful (`user`, `order`, `billing`).
+
+---
+
+## Anti-Patterns to Avoid
+
+- Anemic domain models (no logic in entities).
+- Fat controllers or handlers.
+- Leaking infrastructure into domain.
+- Overusing interfaces without need.
+- Shared global state.
+
+---
+
+## Preferred Patterns
+
+- Rich domain models, explicit dependencies, small focused interfaces.
+- Clear separation of concerns and domain-first design.

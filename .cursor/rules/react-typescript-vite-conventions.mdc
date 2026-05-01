@@ -1,0 +1,162 @@
+---
+description: Idiomatic React + TypeScript + Vite development standards
+globs: "**/src/**/*.{ts,tsx}"
+alwaysApply: true
+---
+
+# React + TypeScript + Vite Conventions
+
+## General Principles
+
+- Prefer simplicity and readability over cleverness.
+- Follow idiomatic React patterns (hooks, composition, functional components).
+- Use strict TypeScript typing; avoid `any` unless absolutely necessary.
+- Co-locate related files (component, styles, tests).
+
+---
+
+## File & Naming Conventions
+
+- Use **PascalCase** for React components (e.g. `UserProfile.tsx`).
+- Use **camelCase** for variables, functions, hooks (e.g. `useAuth`, `fetchUserData`).
+- Prefix hooks with `use`.
+- Use `.tsx` for components, `.ts` for utilities/types.
+- Keep components small and focused (single responsibility).
+
+---
+
+## Component Structure
+
+- Prefer **function components** with arrow functions:
+
+```tsx
+type Props = {
+  name: string;
+};
+
+export const Greeting = ({ name }: Props) => {
+  return <div>Hello, {name}</div>;
+};
+```
+
+- Destructure props in the function signature.
+- Avoid default exports unless necessary (prefer named exports).
+
+---
+
+## Hooks
+
+- Use built-in hooks idiomatically: `useState`, `useEffect`, `useMemo`, `useCallback`.
+- Avoid unnecessary `useMemo` / `useCallback`.
+- Extract reusable logic into custom hooks:
+
+```tsx
+export const useUser = () => {
+  const [user, setUser] = useState<User | null>(null);
+  return { user, setUser };
+};
+```
+
+---
+
+## State Management
+
+- Prefer local state first.
+- Lift state only when necessary.
+- Avoid prop drilling via Context API (sparingly) and custom hooks.
+
+---
+
+## TypeScript Guidelines
+
+- Always type props explicitly.
+- Prefer `type` over `interface` for props.
+- Use unions and discriminated unions where appropriate:
+
+```ts
+type Status = "idle" | "loading" | "error" | "success";
+```
+
+- Avoid `any` and non-null assertions (`!`) unless safe.
+
+---
+
+## Imports
+
+- Use absolute imports if configured (`@/components/...`).
+- Group imports: (1) external libraries, (2) internal modules, (3) types:
+
+```ts
+import { useState } from "react";
+
+import { Button } from "@/components/Button";
+
+import type { User } from "@/types";
+```
+
+---
+
+## Styling
+
+- Prefer one consistent approach: CSS Modules, Tailwind, or styled-components.
+- Avoid inline styles unless dynamic and minimal.
+
+---
+
+## Side Effects
+
+- Keep `useEffect` focused and minimal.
+- Always define dependencies correctly.
+- Avoid async directly in `useEffect`:
+
+```tsx
+useEffect(() => {
+  const load = async () => {
+    const data = await fetchData();
+    setData(data);
+  };
+  load();
+}, []);
+```
+
+---
+
+## Performance
+
+- Optimize only when necessary; avoid premature optimization.
+- Use React DevTools to identify bottlenecks.
+
+---
+
+## Error Handling
+
+- Handle edge cases explicitly; avoid silent failures.
+- Use error boundaries for UI-level errors.
+
+---
+
+## Vite-Specific
+
+- Use Vite aliases (`@`) for cleaner imports.
+- Keep environment variables in `import.meta.env`.
+- Avoid Node-specific APIs in client code.
+
+---
+
+## Testing (Optional but Recommended)
+
+- Use Vitest + React Testing Library.
+- Test behavior, not implementation details.
+
+---
+
+## Anti-Patterns to Avoid
+
+- Large monolithic components, deep prop drilling, overuse of global state.
+- Business logic inside JSX, mutating state directly.
+
+---
+
+## Preferred Patterns
+
+- Composition over inheritance, declarative UI, separation of concerns, reusable hooks.
