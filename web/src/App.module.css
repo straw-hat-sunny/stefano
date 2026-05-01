@@ -324,6 +324,18 @@
   cursor: pointer;
 }
 
+.modelError {
+  font-size: 12px;
+  flex-basis: 100%;
+  color: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  .modelError {
+    color: #fca5a5;
+  }
+}
+
 @media (max-width: 639px) {
   .footerGrid {
     grid-template-columns: 1fr auto;

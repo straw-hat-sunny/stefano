@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"ai-assistant/internal/model"
 	"ai-assistant/web"
 
 	"github.com/gorilla/mux"
@@ -24,8 +25,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	models := model.NewService()
 	r := mux.NewRouter()
 	r.HandleFunc("/api/health", health).Methods(http.MethodGet)
+	r.HandleFunc("/api/models", models.HandleList).Methods(http.MethodGet)
+	r.HandleFunc("/api/model", models.HandleSelect).Methods(http.MethodPost)
 	r.PathPrefix("/").Handler(staticAndSPA(distFS))
 
 	log.Printf("listening on :%s", port)

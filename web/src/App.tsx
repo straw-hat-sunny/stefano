@@ -11,7 +11,7 @@ import type { ListChildComponentProps } from 'react-window';
 import { FixedSizeList } from 'react-window';
 import styles from './App.module.css';
 import type { ChatSession, Message } from './types';
-import { MODELS, type ModelId } from './models';
+import type { ModelOption, ModelsListResponse } from './models';
 
 const SESSION_ROW_HEIGHT = 44;
 const MOCK_REPLY_MS = 720;
@@ -55,7 +55,9 @@ export default function App() {
     { id: initialSessionId, title: 'New chat', messages: [] },
   ]);
   const [activeId, setActiveId] = useState<string | null>(initialSessionId);
-  const [model, setModel] = useState<ModelId>(MODELS[0].id);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState('');
+  const [modelsLoadError, setModelsLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -105,6 +107,41 @@ export default function App() {
   useEffect(() => {
     return () => {
       replyTimeouts.current.forEach(clearTimeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/models');
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = (await res.json()) as ModelsListResponse;
+        if (cancelled) return;
+        if (!Array.isArray(data.models) || data.models.length === 0) {
+          setModelsLoadError('No models available.');
+          setModels([]);
+          setModel('');
+          return;
+        }
+        setModels(data.models);
+        setModelsLoadError(null);
+        const sel = data.models.some((m) => m.id === data.selectedId)
+          ? data.selectedId
+          : data.models[0].id;
+        setModel(sel);
+      } catch {
+        if (!cancelled) {
+          setModelsLoadError('Could not load models.');
+          setModels([]);
+          setModel('');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -159,11 +196,41 @@ export default function App() {
       appendAssistantReply(sessionId, {
         id: id(),
         role: 'assistant',
-        content: `(${MODELS.find((m) => m.id === model)?.label ?? model}) This is a demo reply. Hook up your backend to stream real responses.`,
+        content: `(${models.find((m) => m.id === model)?.label ?? model}) This is a demo reply. Hook up your backend to stream real responses.`,
       });
     }, MOCK_REPLY_MS);
     replyTimeouts.current.push(t);
-  }, [draft, activeId, model, appendAssistantReply]);
+  }, [draft, activeId, model, models, appendAssistantReply]);
+
+  const handleModelChange = useCallback(async (nextId: string) => {
+    const prev = model;
+    setModel(nextId);
+    try {
+      const res = await fetch('/api/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: nextId }),
+      });
+      if (!res.ok) {
+        setModel(prev);
+        return;
+      }
+      const body = (await res.json()) as ModelOption;
+      if (body.id && body.label) {
+        setModels((m) => {
+          const i = m.findIndex((x) => x.id === body.id);
+          if (i >= 0) {
+            const copy = [...m];
+            copy[i] = { id: body.id, label: body.label };
+            return copy;
+          }
+          return m;
+        });
+      }
+    } catch {
+      setModel(prev);
+    }
+  }, [model]);
 
   const onKeyDownDraft = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -298,15 +365,22 @@ export default function App() {
                 id="model-select"
                 className={styles.modelSelect}
                 value={model}
-                onChange={(e) => setModel(e.target.value as ModelId)}
+                onChange={(e) => void handleModelChange(e.target.value)}
+                disabled={models.length === 0}
                 aria-label="Model"
+                aria-invalid={modelsLoadError ? true : undefined}
               >
-                {MODELS.map((m) => (
+                {models.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.label}
                   </option>
                 ))}
               </select>
+              {modelsLoadError ? (
+                <span className={styles.modelError} role="alert">
+                  {modelsLoadError}
+                </span>
+              ) : null}
             </div>
           </div>
         </footer>
