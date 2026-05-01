@@ -22,3 +22,8 @@ func byID(id string) (Model, bool) {
 	}
 	return Model{}, false
 }
+
+// Lookup returns the catalog entry for id, if any.
+func Lookup(id string) (Model, bool) {
+	return byID(id)
+}

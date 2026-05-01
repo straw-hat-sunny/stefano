@@ -41,3 +41,24 @@ func TestService_SelectUnknown(t *testing.T) {
 		t.Fatalf("want ErrUnknownModel, got %v", err)
 	}
 }
+
+func TestService_Selected(t *testing.T) {
+	s := NewService()
+	m, err := s.Selected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != Catalog[0].ID {
+		t.Fatalf("got %q want %q", m.ID, Catalog[0].ID)
+	}
+	if _, err := s.Select("gpt-4o-mini"); err != nil {
+		t.Fatal(err)
+	}
+	m2, err := s.Selected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m2.ID != "gpt-4o-mini" {
+		t.Fatalf("got %q", m2.ID)
+	}
+}

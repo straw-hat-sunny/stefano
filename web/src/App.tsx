@@ -10,6 +10,7 @@ import {
 import type { ListChildComponentProps } from 'react-window';
 import { FixedSizeList } from 'react-window';
 import styles from './App.module.css';
+import { STEFANO_SYSTEM_PROMPT } from './chatConstants';
 import type { ChatMessageResponse, ChatSession, Message } from './types';
 import type { ModelOption, ModelsListResponse } from './models';
 
@@ -17,6 +18,10 @@ const SESSION_ROW_HEIGHT = 44;
 
 function id(): string {
   return crypto.randomUUID();
+}
+
+function stefanoSystemMessage(): Message {
+  return { id: id(), role: 'system', content: STEFANO_SYSTEM_PROMPT };
 }
 
 function titleFromMessage(text: string): string {
@@ -51,7 +56,7 @@ function SessionRow({ index, style, data }: ListChildComponentProps<RowData>) {
 export default function App() {
   const initialSessionId = useMemo(() => id(), []);
   const [sessions, setSessions] = useState<ChatSession[]>(() => [
-    { id: initialSessionId, title: 'New chat', messages: [] },
+    { id: initialSessionId, title: 'New chat', messages: [stefanoSystemMessage()] },
   ]);
   const [activeId, setActiveId] = useState<string | null>(initialSessionId);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -152,7 +157,7 @@ export default function App() {
   );
 
   const handleNewChat = useCallback(() => {
-    const next: ChatSession = { id: id(), title: 'New chat', messages: [] };
+    const next: ChatSession = { id: id(), title: 'New chat', messages: [stefanoSystemMessage()] };
     setSessions((prev) => [next, ...prev]);
     setActiveId(next.id);
     closeSidebarMobile();
@@ -171,6 +176,12 @@ export default function App() {
     if (!trimmed || !activeId || pendingSessionId !== null) return;
 
     const sessionId = activeId;
+    const session = sessions.find((s) => s.id === sessionId);
+    const priorMessages = session?.messages ?? [];
+    const apiMessages = [
+      ...priorMessages.map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: trimmed },
+    ];
     const userMsg: Message = { id: id(), role: 'user', content: trimmed };
     setDraft('');
     setSendError(null);
@@ -180,8 +191,9 @@ export default function App() {
       prev.map((s) => {
         if (s.id !== sessionId) return s;
         const nextMessages = [...s.messages, userMsg];
+        const userTurnsBefore = s.messages.filter((m) => m.role === 'user').length;
         const nextTitle =
-          s.title === 'New chat' && s.messages.length === 0
+          s.title === 'New chat' && userTurnsBefore === 0
             ? titleFromMessage(trimmed)
             : s.title;
         return { ...s, title: nextTitle, messages: nextMessages };
@@ -193,7 +205,11 @@ export default function App() {
         const res = await fetch('/api/chat/message', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: trimmed, modelId: model }),
+          body: JSON.stringify({
+            content: trimmed,
+            modelId: model,
+            messages: apiMessages,
+          }),
         });
         if (!res.ok) {
           let msg = `Request failed (${res.status})`;
@@ -230,7 +246,7 @@ export default function App() {
         setPendingSessionId((cur) => (cur === sessionId ? null : cur));
       }
     })();
-  }, [draft, activeId, pendingSessionId, model, appendAssistantReply]);
+  }, [draft, activeId, pendingSessionId, model, sessions, appendAssistantReply]);
 
   const handleModelChange = useCallback(async (nextId: string) => {
     const prev = model;
@@ -277,6 +293,11 @@ export default function App() {
     }),
     [sessions, activeId, handleSelectSession]
   );
+
+  const visibleMessages = useMemo(() => {
+    if (!activeSession) return [];
+    return activeSession.messages.filter((m) => m.role !== 'system');
+  }, [activeSession]);
 
   const drawerOpenClass = isMobile && sidebarOpen ? styles.drawerOpen : '';
 
@@ -342,13 +363,13 @@ export default function App() {
         </header>
 
         <main className={styles.messages} role="log" aria-live="polite" aria-relevant="additions">
-          {activeSession && activeSession.messages.length === 0 ? (
+          {activeSession && visibleMessages.length === 0 ? (
             <p className={styles.emptyState}>
               Start the conversation below. Messages stay in this session until you open another
               chat or start a new one.
             </p>
           ) : null}
-          {activeSession?.messages.map((m) => (
+          {visibleMessages.map((m) => (
             <div
               key={m.id}
               className={`${styles.bubbleRow} ${

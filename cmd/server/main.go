@@ -27,11 +27,16 @@ func main() {
 	}
 
 	models := model.NewService()
+	chatHandler := chat.NewHandler(
+		models,
+		chat.NewOpenAIClient(os.Getenv("OPENAI_BASE_URL"), os.Getenv("OPENAI_API_KEY"), nil),
+	)
+
 	r := mux.NewRouter()
 	r.HandleFunc("/api/health", health).Methods(http.MethodGet)
 	r.HandleFunc("/api/models", models.HandleList).Methods(http.MethodGet)
 	r.HandleFunc("/api/model", models.HandleSelect).Methods(http.MethodPost)
-	r.HandleFunc("/api/chat/message", chat.HandleMessage).Methods(http.MethodPost)
+	r.HandleFunc("/api/chat/message", chatHandler.HandleMessage).Methods(http.MethodPost)
 	r.PathPrefix("/").Handler(staticAndSPA(distFS))
 
 	log.Printf("listening on :%s", port)

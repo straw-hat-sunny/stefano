@@ -43,3 +43,15 @@ func (s *Service) Select(id string) (Model, error) {
 	s.mu.Unlock()
 	return m, nil
 }
+
+// Selected returns the currently selected model from the catalog.
+func (s *Service) Selected() (Model, error) {
+	s.mu.Lock()
+	id := s.selectedID
+	s.mu.Unlock()
+	m, ok := byID(id)
+	if !ok {
+		return Model{}, ErrUnknownModel
+	}
+	return m, nil
+}
