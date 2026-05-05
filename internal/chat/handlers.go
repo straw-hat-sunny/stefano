@@ -1,100 +1,141 @@
 package chat
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
-	"strings"
-	"time"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 )
 
-const (
-	maxBodyBytes = 1 << 16
-	replyDelay   = 800 * time.Millisecond
-)
+const maxChatBodyBytes = 1 << 16
 
-// replySleeper is overridden in tests to avoid real delays.
-var replySleeper = time.Sleep
+// chatIDPath is a mux path segment with UUID constraint for {chat_id}.
+const chatIDPath = `/{chat_id:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}}`
 
-type messageRequest struct {
-	Content string `json:"content"`
-	ModelID string `json:"modelId"`
-}
-
-type messagePayload struct {
-	ID      string `json:"id"`
-	Role    string `json:"role"`
+type chatMessageDTO struct {
+	User    string `json:"user"`
 	Content string `json:"content"`
 }
 
-type messageResponse struct {
-	Message messagePayload `json:"message"`
+// ChatResponse is the JSON shape for a chat session.
+type ChatResponse struct {
+	ID       uuid.UUID        `json:"id"`
+	Messages []chatMessageDTO `json:"messages"`
+}
+
+// ProcessChatRequest is the body for POST /api/chat/{chat_id}.
+type ProcessChatRequest struct {
+	Content string `json:"content"`
+}
+
+// ProcessChatResponse is the response for POST /api/chat/{chat_id}.
+type ProcessChatResponse struct {
+	Message chatMessageDTO `json:"message"`
 }
 
 type errResponse struct {
 	Error string `json:"error"`
 }
 
-// HandleMessage serves POST /api/chat/message with JSON body {"content":"...","modelId":"..."}.
-func HandleMessage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+// RegisterRoutes mounts all /api/chat HTTP routes on parent.
+func RegisterRoutes(parent *mux.Router, svc *Service) {
+	parent.Methods(http.MethodPost).Path("/api/chat").HandlerFunc(svc.HandleCreateChat)
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	sr := parent.PathPrefix("/api/chat").Subrouter()
+	sr.Methods(http.MethodGet).Path(chatIDPath).HandlerFunc(svc.HandleGetChat)
+	sr.Methods(http.MethodPost).Path(chatIDPath).HandlerFunc(svc.HandleProcessChat)
+}
+
+// HandleCreateChat serves POST /api/chat.
+func (s *Service) HandleCreateChat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	chat, err := s.CreateChat(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(toChatResponse(chat))
+}
+
+// HandleGetChat serves GET /api/chat/{chat_id}.
+func (s *Service) HandleGetChat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id, err := uuid.Parse(mux.Vars(r)["chat_id"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid chat id")
+		return
+	}
+	chat, err := s.GetChat(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrChatNotFound) {
+			writeErr(w, http.StatusNotFound, "chat not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(toChatResponse(chat))
+}
+
+// HandleProcessChat serves POST /api/chat/{chat_id}.
+func (s *Service) HandleProcessChat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	id, err := uuid.Parse(mux.Vars(r)["chat_id"])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid chat id")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxChatBodyBytes+1))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if len(body) > maxBodyBytes {
+	if len(body) > maxChatBodyBytes {
 		writeErr(w, http.StatusBadRequest, "body too large")
 		return
 	}
 
-	var req messageRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	content := strings.TrimSpace(req.Content)
-	if content == "" {
-		writeErr(w, http.StatusBadRequest, "content is required")
+	var req ProcessChatRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.Content == "" {
+		writeErr(w, http.StatusBadRequest, "expected JSON object with non-empty content")
 		return
 	}
 
-	replySleeper(replyDelay)
-
-	modelRef := strings.TrimSpace(req.ModelID)
-	if modelRef == "" {
-		modelRef = "(no model)"
-	}
-	text := fmt.Sprintf(
-		"(%s) Hi John!.",
-		modelRef,
-	)
-
-	msgID, err := randomHexID()
+	userMsg, err := NewMessage("user", req.Content)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(messageResponse{
-		Message: messagePayload{
-			ID:      msgID,
-			Role:    "assistant",
-			Content: text,
-		},
+	assistantMsg, err := s.ProcessMessage(r.Context(), id, userMsg)
+	if err != nil {
+		if errors.Is(err, ErrChatNotFound) {
+			writeErr(w, http.StatusNotFound, "chat not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(ProcessChatResponse{
+		Message: messageToDTO(assistantMsg),
 	})
 }
 
-func randomHexID() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+func messageToDTO(m Message) chatMessageDTO {
+	return chatMessageDTO{User: m.User, Content: m.Content}
+}
+
+func toChatResponse(c Chat) ChatResponse {
+	dtos := make([]chatMessageDTO, len(c.Messages))
+	for i := range c.Messages {
+		dtos[i] = messageToDTO(c.Messages[i])
 	}
-	return hex.EncodeToString(b), nil
+	return ChatResponse{ID: c.ID, Messages: dtos}
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {

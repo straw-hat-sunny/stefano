@@ -27,11 +27,14 @@ func main() {
 	}
 
 	models := model.NewService()
+	chatSvc := chat.NewService(chat.NewInMemRepo())
+
 	r := mux.NewRouter()
 	r.HandleFunc("/api/health", health).Methods(http.MethodGet)
 	r.HandleFunc("/api/models", models.HandleList).Methods(http.MethodGet)
 	r.HandleFunc("/api/model", models.HandleSelect).Methods(http.MethodPost)
-	r.HandleFunc("/api/chat/message", chat.HandleMessage).Methods(http.MethodPost)
+	chat.RegisterRoutes(r, chatSvc)
+
 	r.PathPrefix("/").Handler(staticAndSPA(distFS))
 
 	log.Printf("listening on :%s", port)

@@ -2,9 +2,6 @@ package model
 
 // Catalog is the supported model list (hardcoded until backed by config or DB).
 var Catalog = []Model{
-	{ID: "gpt-4.1", Label: "GPT-4.1"},
-	{ID: "gpt-4o-mini", Label: "GPT-4o mini"},
-	{ID: "claude-sonnet", Label: "Claude Sonnet"},
 	{ID: "gemma4", Label: "Gemma 4"},
 }
 

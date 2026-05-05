@@ -3,10 +3,11 @@
 #
 # Requires: Node.js 25.x (see .nvmrc), npm, Go 1.26.2 (see go.mod toolchain)
 #
-#   task           — build frontend (web/dist) + Go binary (bin/server[.exe])
-#   task build     — same as default
-#   task run       — build then start server (PORT env optional, default 8080)
-#   task clean     — remove bin/ and web/dist
+#   task             — build frontend (web/dist) + Go binary (bin/server[.exe])
+#   task build       — same as default
+#   task run         — build then start server (PORT env optional, default 8080)
+#   task run-backend — compile Go server only (no npm/vite), then start it
+#   task clean       — remove bin/ and web/dist
 
 version: '3'
 
@@ -41,6 +42,12 @@ tasks:
     desc: Build then run the server
     cmds:
       - task: build
+      - '{{.SERVER_BIN}}'
+
+  run-backend:
+    desc: Build Go binary only (skips frontend), then run the server
+    cmds:
+      - task: go-binary
       - '{{.SERVER_BIN}}'
 
   clean:
