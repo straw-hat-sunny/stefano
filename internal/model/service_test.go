@@ -18,15 +18,15 @@ func TestNewService_DefaultSelection(t *testing.T) {
 
 func TestService_Select(t *testing.T) {
 	s := NewService()
-	m, err := s.Select("gpt-4o-mini")
+	m, err := s.Select("gemma4")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.ID != "gpt-4o-mini" || m.Label != "GPT-4o mini" {
+	if m.ID != "gemma4" || m.Label != "Gemma 4" {
 		t.Fatalf("model: %+v", m)
 	}
 	_, sel := s.List()
-	if sel != "gpt-4o-mini" {
+	if sel != "gemma4" {
 		t.Fatalf("selectedId after select: got %q", sel)
 	}
 }
