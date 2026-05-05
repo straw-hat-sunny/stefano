@@ -1,6 +1,10 @@
 package chat
 
-import "github.com/google/uuid"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 const assistantMessage = "Welcome, I am Stefano your personal assistant. How can I assist you today?"
 const assistantUser = "assistant"
@@ -20,7 +24,20 @@ func NewMessage(user string, content string) (Message, error) {
 	return Message{ID: id, User: user, Content: content}, nil
 }
 
+type llmClient interface {
+	GenerateMessage(ctx context.Context, userMessage string) (string, error)
+}
+
 type Chat struct {
-	ID       uuid.UUID `json:"id"` // uuidv7
-	Messages []Message `json:"messages"`
+	ID        uuid.UUID // uuidv7
+	Messages  []Message
+	llmClient llmClient
+}
+
+func (c *Chat) generateAssistantMessage(ctx context.Context, userMessage Message) (Message, error) {
+	assistantMessage, err := c.llmClient.GenerateMessage(ctx, userMessage.Content)
+	if err != nil {
+		return Message{}, err
+	}
+	return NewMessage(assistantUser, assistantMessage)
 }

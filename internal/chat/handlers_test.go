@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,24 +15,45 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// stubLLM implements llmClient for tests (no sleep; deterministic text).
-type stubLLM struct {
-	out string
-	err error
-}
+// chatTestsMockServer serves OpenAI-compatible chat completions so CreateChat's embedded client matches ProcessMessage expectations.
+var chatTestsMockServer *httptest.Server
 
-func (s *stubLLM) GenerateMessage(ctx context.Context, userMessage string) (string, error) {
-	if s.err != nil {
-		return "", s.err
-	}
-	if s.out != "" {
-		return s.out, nil
-	}
-	return "Thinking...", nil
+func TestMain(m *testing.M) {
+	chatTestsMockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-test",
+			"object": "chat.completion",
+			"created": 1700000000,
+			"model": "gemma4",
+			"choices": [
+				{
+					"index": 0,
+					"finish_reason": "stop",
+					"message": {
+						"role": "assistant",
+						"content": "Thinking...",
+						"refusal": ""
+					},
+					"logprobs": {
+						"content": [],
+						"refusal": []
+					}
+				}
+			]
+		}`))
+	}))
+	defer chatTestsMockServer.Close()
+
+	_ = os.Setenv("OPENAI_BASE_URL", chatTestsMockServer.URL+"/engines/v1")
+	_ = os.Setenv("OPENAI_MODEL", "gemma4")
+	_ = os.Setenv("OPENAI_API_KEY", "test")
+
+	os.Exit(m.Run())
 }
 
 func setupTestRouter() (*mux.Router, *Service) {
-	svc := NewService(NewInMemRepo(), &stubLLM{out: "Thinking..."})
+	svc := NewService(NewInMemRepo())
 	r := mux.NewRouter()
 	RegisterRoutes(r, svc)
 	return r, svc
@@ -70,7 +92,7 @@ func TestHandleCreateChat_OK(t *testing.T) {
 }
 
 func TestHandleCreateChat_RepoError(t *testing.T) {
-	svc := NewService(&createFailRepo{}, &stubLLM{})
+	svc := NewService(&createFailRepo{})
 	r := mux.NewRouter()
 	RegisterRoutes(r, svc)
 

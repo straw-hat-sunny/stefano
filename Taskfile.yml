@@ -8,6 +8,7 @@
 #   task run         — build then start server (PORT env optional, default 8080)
 #   task run-backend — compile Go server only (no npm/vite), then start it
 #   task test        — go test ./... (all packages)
+#   task format      — go fmt ./... (all Go packages)
 #   task clean       — remove bin/ and web/dist
 
 version: '3'
@@ -55,6 +56,11 @@ tasks:
     desc: Run all Go tests (go test ./...)
     cmds:
       - go test ./... -count=1
+
+  format:
+    desc: Format all Go code (go fmt ./...)
+    cmds:
+      - go fmt ./...
 
   clean:
     desc: Remove bin/ and web/dist (Node required for portable delete)
