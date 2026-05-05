@@ -10,20 +10,21 @@ import {
 import type { ListChildComponentProps } from 'react-window';
 import { FixedSizeList } from 'react-window';
 import styles from './App.module.css';
-import type { ChatMessageResponse, ChatSession, Message } from './types';
+import { loadPersisted, savePersisted } from './chatPersistence';
+import {
+  chatApiResponseToSession,
+  newMessageId,
+  titleFromMessage,
+} from './chatSession';
+import type {
+  ChatSession,
+  CreateChatApiResponse,
+  Message,
+  ProcessChatApiResponse,
+} from './types';
 import type { ModelOption, ModelsListResponse } from './models';
 
 const SESSION_ROW_HEIGHT = 44;
-
-function id(): string {
-  return crypto.randomUUID();
-}
-
-function titleFromMessage(text: string): string {
-  const line = text.trim().split('\n')[0] ?? '';
-  const t = line.length > 48 ? `${line.slice(0, 45)}…` : line;
-  return t || 'New chat';
-}
 
 type RowData = {
   sessions: ChatSession[];
@@ -49,11 +50,10 @@ function SessionRow({ index, style, data }: ListChildComponentProps<RowData>) {
 }
 
 export default function App() {
-  const initialSessionId = useMemo(() => id(), []);
-  const [sessions, setSessions] = useState<ChatSession[]>(() => [
-    { id: initialSessionId, title: 'New chat', messages: [] },
-  ]);
-  const [activeId, setActiveId] = useState<string | null>(initialSessionId);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [newChatPending, setNewChatPending] = useState(false);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState('');
   const [modelsLoadError, setModelsLoadError] = useState<string | null>(null);
@@ -62,6 +62,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [hydrationReady, setHydrationReady] = useState(false);
 
   const listWrapRef = useRef<HTMLDivElement>(null);
   const [listHeight, setListHeight] = useState(320);
@@ -103,6 +104,113 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [sidebarOpen, isMobile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const persisted = loadPersisted();
+        const chatIds = persisted?.chatIds ?? [];
+        const savedActive = persisted?.activeChatId ?? null;
+
+        if (chatIds.length > 0) {
+          const results = await Promise.all(
+            chatIds.map((cid) =>
+              fetch(`/api/chat/${encodeURIComponent(cid)}`)
+                .then(
+                  async (res): Promise<{
+                    cid: string;
+                    session: ChatSession | null;
+                  }> => {
+                    if (!res.ok) {
+                      return { cid, session: null };
+                    }
+                    try {
+                      const data: unknown = await res.json();
+                      return { cid, session: chatApiResponseToSession(data) };
+                    } catch {
+                      return { cid, session: null };
+                    }
+                  }
+                )
+                .catch(() => ({
+                  cid,
+                  session: null as ChatSession | null,
+                }))
+            )
+          );
+
+          if (cancelled) return;
+
+          const recovered: ChatSession[] = [];
+          const prunedIds: string[] = [];
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r.session) {
+              recovered.push(r.session);
+              prunedIds.push(r.cid);
+            }
+          }
+
+          if (recovered.length > 0) {
+            setSessionError(null);
+            setSessions(recovered);
+            const active =
+              savedActive && recovered.some((s) => s.id === savedActive)
+                ? savedActive
+                : recovered[0].id;
+            setActiveId(active);
+            setHydrationReady(true);
+            return;
+          }
+        }
+
+        const res = await fetch('/api/chat', { method: 'POST' });
+        if (cancelled) return;
+        if (!res.ok) {
+          let msg = `Request failed (${res.status})`;
+          try {
+            const errBody = (await res.json()) as { error?: string };
+            if (typeof errBody.error === 'string' && errBody.error) {
+              msg = errBody.error;
+            }
+          } catch {
+            /* ignore */
+          }
+          throw new Error(msg);
+        }
+        const data = (await res.json()) as CreateChatApiResponse;
+        const session = chatApiResponseToSession(data);
+        if (!session) {
+          setSessionError('Invalid response from server.');
+          setHydrationReady(true);
+          return;
+        }
+        setSessionError(null);
+        setSessions([session]);
+        setActiveId(session.id);
+        setHydrationReady(true);
+      } catch (e) {
+        if (!cancelled) {
+          setSessionError(
+            e instanceof Error ? e.message : 'Could not start chat.'
+          );
+        }
+        setHydrationReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrationReady) return;
+    savePersisted({
+      chatIds: sessions.map((s) => s.id),
+      activeChatId: activeId,
+    });
+  }, [hydrationReady, sessions, activeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,11 +260,41 @@ export default function App() {
   );
 
   const handleNewChat = useCallback(() => {
-    const next: ChatSession = { id: id(), title: 'New chat', messages: [] };
-    setSessions((prev) => [next, ...prev]);
-    setActiveId(next.id);
-    closeSidebarMobile();
-  }, [closeSidebarMobile]);
+    if (newChatPending) return;
+    void (async () => {
+      setNewChatPending(true);
+      setSessionError(null);
+      try {
+        const res = await fetch('/api/chat', { method: 'POST' });
+        if (!res.ok) {
+          let msg = `Request failed (${res.status})`;
+          try {
+            const errBody = (await res.json()) as { error?: string };
+            if (typeof errBody.error === 'string' && errBody.error) {
+              msg = errBody.error;
+            }
+          } catch {
+            /* ignore */
+          }
+          setSessionError(msg);
+          return;
+        }
+        const data = (await res.json()) as CreateChatApiResponse;
+        const session = chatApiResponseToSession(data);
+        if (!session) {
+          setSessionError('Invalid response from server.');
+          return;
+        }
+        setSessions((prev) => [session, ...prev]);
+        setActiveId(session.id);
+        closeSidebarMobile();
+      } catch {
+        setSessionError('Could not create chat.');
+      } finally {
+        setNewChatPending(false);
+      }
+    })();
+  }, [closeSidebarMobile, newChatPending]);
 
   const appendAssistantReply = useCallback((sessionId: string, reply: Message) => {
     setSessions((prev) =>
@@ -171,7 +309,7 @@ export default function App() {
     if (!trimmed || !activeId || pendingSessionId !== null) return;
 
     const sessionId = activeId;
-    const userMsg: Message = { id: id(), role: 'user', content: trimmed };
+    const userMsg: Message = { id: newMessageId(), role: 'user', content: trimmed };
     setDraft('');
     setSendError(null);
     setPendingSessionId(sessionId);
@@ -180,8 +318,9 @@ export default function App() {
       prev.map((s) => {
         if (s.id !== sessionId) return s;
         const nextMessages = [...s.messages, userMsg];
+        const hadNoUserMessage = !s.messages.some((m) => m.role === 'user');
         const nextTitle =
-          s.title === 'New chat' && s.messages.length === 0
+          s.title === 'New chat' && hadNoUserMessage
             ? titleFromMessage(trimmed)
             : s.title;
         return { ...s, title: nextTitle, messages: nextMessages };
@@ -190,11 +329,14 @@ export default function App() {
 
     void (async () => {
       try {
-        const res = await fetch('/api/chat/message', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: trimmed, modelId: model }),
-        });
+        const res = await fetch(
+          `/api/chat/${encodeURIComponent(sessionId)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: trimmed }),
+          }
+        );
         if (!res.ok) {
           let msg = `Request failed (${res.status})`;
           try {
@@ -208,19 +350,18 @@ export default function App() {
           setSendError(msg);
           return;
         }
-        const data = (await res.json()) as ChatMessageResponse;
+        const data = (await res.json()) as ProcessChatApiResponse;
         const m = data.message;
         if (
           !m ||
-          typeof m.id !== 'string' ||
-          m.role !== 'assistant' ||
-          typeof m.content !== 'string'
+          typeof m.content !== 'string' ||
+          m.user !== 'assistant'
         ) {
           setSendError('Invalid response from server.');
           return;
         }
         appendAssistantReply(sessionId, {
-          id: m.id,
+          id: newMessageId(),
           role: 'assistant',
           content: m.content,
         });
@@ -230,7 +371,7 @@ export default function App() {
         setPendingSessionId((cur) => (cur === sessionId ? null : cur));
       }
     })();
-  }, [draft, activeId, pendingSessionId, model, appendAssistantReply]);
+  }, [draft, activeId, pendingSessionId, appendAssistantReply]);
 
   const handleModelChange = useCallback(async (nextId: string) => {
     const prev = model;
@@ -298,7 +439,15 @@ export default function App() {
         inert={isMobile && !sidebarOpen ? true : undefined}
       >
         <div className={styles.sidebarInner}>
-          <button type="button" className={styles.newChat} onClick={handleNewChat}>
+          <button
+            type="button"
+            className={styles.newChat}
+            onClick={handleNewChat}
+            disabled={
+              newChatPending ||
+              (!hydrationReady && sessions.length === 0 && sessionError === null)
+            }
+          >
             New Chat
           </button>
           <h2 className={styles.historyHeading}>HISTORY</h2>
@@ -342,6 +491,14 @@ export default function App() {
         </header>
 
         <main className={styles.messages} role="log" aria-live="polite" aria-relevant="additions">
+          {!hydrationReady && !sessionError ? (
+            <p className={styles.emptyState}>Loading…</p>
+          ) : null}
+          {sessions.length === 0 && sessionError ? (
+            <p className={styles.emptyState} role="alert">
+              {sessionError}
+            </p>
+          ) : null}
           {activeSession && activeSession.messages.length === 0 ? (
             <p className={styles.emptyState}>
               Start the conversation below. Messages stay in this session until you open another
@@ -387,7 +544,7 @@ export default function App() {
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDownDraft}
               aria-label="Chat message"
-              disabled={pendingSessionId !== null}
+              disabled={pendingSessionId !== null || !activeId}
             />
             <button
               type="button"
