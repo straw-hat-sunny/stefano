@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"ai-assistant/internal/chat"
+	"ai-assistant/internal/llm"
 	"ai-assistant/internal/model"
 	"ai-assistant/web"
 
@@ -27,7 +28,8 @@ func main() {
 	}
 
 	models := model.NewService()
-	chatSvc := chat.NewService(chat.NewInMemRepo())
+	llmClient := llm.NewFakeLLMClient()
+	chatSvc := chat.NewService(chat.NewInMemRepo(), llmClient)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/api/health", health).Methods(http.MethodGet)

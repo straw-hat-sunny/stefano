@@ -14,8 +14,24 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// stubLLM implements llmClient for tests (no sleep; deterministic text).
+type stubLLM struct {
+	out string
+	err error
+}
+
+func (s *stubLLM) GenerateMessage(ctx context.Context, userMessage string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	if s.out != "" {
+		return s.out, nil
+	}
+	return "Thinking...", nil
+}
+
 func setupTestRouter() (*mux.Router, *Service) {
-	svc := NewService(NewInMemRepo())
+	svc := NewService(NewInMemRepo(), &stubLLM{out: "Thinking..."})
 	r := mux.NewRouter()
 	RegisterRoutes(r, svc)
 	return r, svc
@@ -54,7 +70,7 @@ func TestHandleCreateChat_OK(t *testing.T) {
 }
 
 func TestHandleCreateChat_RepoError(t *testing.T) {
-	svc := NewService(&createFailRepo{})
+	svc := NewService(&createFailRepo{}, &stubLLM{})
 	r := mux.NewRouter()
 	RegisterRoutes(r, svc)
 

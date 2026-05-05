@@ -13,14 +13,19 @@ type ChatRepository interface {
 	DeleteChat(ctx context.Context, id uuid.UUID) error
 }
 
+type llmClient interface {
+	GenerateMessage(ctx context.Context, userMessage string) (string, error)
+}
+
 // Service is the chat service, responsible for managing the chat sessions and messages.
 type Service struct {
-	repo ChatRepository
+	repo      ChatRepository
+	llmClient llmClient
 }
 
 // NewService returns a new chat service.
-func NewService(repo ChatRepository) *Service {
-	return &Service{repo: repo}
+func NewService(repo ChatRepository, llmClient llmClient) *Service {
+	return &Service{repo: repo, llmClient: llmClient}
 }
 
 // CreateChat creates a new chat session and returns the chat object.
@@ -52,6 +57,14 @@ func (s *Service) GetChat(ctx context.Context, id uuid.UUID) (Chat, error) {
 	return s.repo.GetChat(ctx, id)
 }
 
+func (s *Service) generateAssistantMessage(ctx context.Context, userMessage Message) (Message, error) {
+	assistantMessage, err := s.llmClient.GenerateMessage(ctx, userMessage.Content)
+	if err != nil {
+		return Message{}, err
+	}
+	return NewMessage(assistantUser, assistantMessage)
+}
+
 // ProcessMessage is the function that processes the user message and returns the assistant message.
 func (s *Service) ProcessMessage(ctx context.Context, id uuid.UUID, userMessage Message) (Message, error) {
 	chat, err := s.repo.GetChat(ctx, id)
@@ -60,7 +73,7 @@ func (s *Service) ProcessMessage(ctx context.Context, id uuid.UUID, userMessage 
 	}
 
 	// Generate a message from the assistant
-	assistantMessage, err := NewMessage(assistantUser, "Thinking...")
+	assistantMessage, err := s.generateAssistantMessage(ctx, userMessage)
 	if err != nil {
 		return Message{}, err
 	}
