@@ -2,13 +2,24 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
+	"ai-assistant/internal/tools/websearch"
+
+	"github.com/joho/godotenv"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
+)
+
+const (
+	webSearchToolName = "web_search"
+	maxToolIterations = 8
 )
 
 const (
@@ -80,15 +91,22 @@ Instead of: “Please clarify your request.”
 
 // OpenAILLMClient calls an OpenAI-compatible HTTP API (e.g. Docker Model Runner) using openai-go.
 type OpenAILLMClient struct {
-	client   openai.Client
-	model    shared.ChatModel
-	messages []openai.ChatCompletionMessageParamUnion
+	client    openai.Client
+	model     shared.ChatModel
+	messages  []openai.ChatCompletionMessageParamUnion
+	webSearch *websearch.Client
 }
 
 // NewOpenAILLMClient builds a client using OPENAI_BASE_URL, OPENAI_MODEL, and OPENAI_API_KEY
 // when set; otherwise it uses defaultOpenAIBase, defaultOpenAIModel, and defaultOpenAIAPIKey.
 // The base URL is parsed to ensure it is valid before returning.
 func NewOpenAILLMClient() (*OpenAILLMClient, error) {
+	// load env variables
+	err := godotenv.Load()
+	if err != nil {
+		return nil, fmt.Errorf("llm: error loading env variables: %w", err)
+	}
+
 	base := os.Getenv("OPENAI_BASE_URL")
 	if base == "" {
 		base = defaultOpenAIBase
@@ -112,29 +130,114 @@ func NewOpenAILLMClient() (*OpenAILLMClient, error) {
 		option.WithAPIKey(apiKey),
 	)
 
+	var tavily *websearch.Client
+	if k := strings.TrimSpace(os.Getenv("TAVILY_API_KEY")); k != "" {
+		tavily = websearch.NewClient(k)
+	}
+
 	return &OpenAILLMClient{
-		client: client,
-		model:  shared.ChatModel(model),
+		client:    client,
+		model:     shared.ChatModel(model),
+		webSearch: tavily,
 		messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(defaultOpenAISystemMessage),
 		},
 	}, nil
 }
 
-// GenerateMessage runs a single-turn chat completion with the configured model.
+func webSearchToolParam() openai.ChatCompletionToolUnionParam {
+	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        webSearchToolName,
+		Description: param.NewOpt("Search the web for current or factual information. Returns a short synthesized answer."),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{
+					"type":        "string",
+					"description": "The search query.",
+				},
+			},
+			"required": []string{"query"},
+		},
+	})
+}
+
+// GenerateMessage runs a chat completion for the user turn. When TAVILY_API_KEY is set, a
+// web_search tool is available; successful searches return Tavily's answer text to the model.
 func (c *OpenAILLMClient) GenerateMessage(ctx context.Context, userMessage string) (string, error) {
 	c.messages = append(c.messages, openai.UserMessage(userMessage))
-	resp, err := c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:    c.model,
-		Messages: c.messages,
-	})
+
+	var tools []openai.ChatCompletionToolUnionParam
+	if c.webSearch != nil {
+		tools = []openai.ChatCompletionToolUnionParam{webSearchToolParam()}
+	}
+
+	for range maxToolIterations {
+		params := openai.ChatCompletionNewParams{
+			Model:    c.model,
+			Messages: c.messages,
+		}
+		if len(tools) > 0 {
+			params.Tools = tools
+		}
+
+		resp, err := c.client.Chat.Completions.New(ctx, params)
+		if err != nil {
+			return "", err
+		}
+		if len(resp.Choices) == 0 {
+			return "", fmt.Errorf("llm: chat completion returned no choices")
+		}
+
+		choice := resp.Choices[0]
+		msg := choice.Message
+
+		if choice.FinishReason == "tool_calls" && len(msg.ToolCalls) > 0 && c.webSearch != nil {
+			c.messages = append(c.messages, msg.ToParam())
+			for _, tc := range msg.ToolCalls {
+				fn, ok := tc.AsAny().(openai.ChatCompletionMessageFunctionToolCall)
+				if !ok {
+					return "", fmt.Errorf("llm: unsupported tool call (expected function)")
+				}
+				out, execErr := c.runWebSearchTool(ctx, fn)
+				if execErr != nil {
+					fmt.Println("execErr", execErr)
+					out = execErr.Error()
+				}
+				c.messages = append(c.messages, openai.ToolMessage(out, fn.ID))
+			}
+			continue
+		}
+
+		c.messages = append(c.messages, msg.ToParam())
+		if msg.Refusal != "" {
+			return msg.Refusal, nil
+		}
+		return msg.Content, nil
+	}
+
+	return "", fmt.Errorf("llm: exceeded max tool iterations (%d)", maxToolIterations)
+}
+
+type webSearchArgs struct {
+	Query string `json:"query"`
+}
+
+func (c *OpenAILLMClient) runWebSearchTool(ctx context.Context, fn openai.ChatCompletionMessageFunctionToolCall) (string, error) {
+	if fn.Function.Name != webSearchToolName {
+		return "", fmt.Errorf("unknown tool %q", fn.Function.Name)
+	}
+	var args webSearchArgs
+	if err := json.Unmarshal([]byte(fn.Function.Arguments), &args); err != nil {
+		return "", fmt.Errorf("decode tool arguments: %w", err)
+	}
+	q := strings.TrimSpace(args.Query)
+	if q == "" {
+		return "", fmt.Errorf("empty search query")
+	}
+	res, err := c.webSearch.Search(ctx, q)
 	if err != nil {
 		return "", err
 	}
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("llm: chat completion returned no choices")
-	}
-	assistantMessage := resp.Choices[0].Message
-	c.messages = append(c.messages, openai.AssistantMessage(assistantMessage.Content))
-	return assistantMessage.Content, nil
+	return res.Answer, nil
 }

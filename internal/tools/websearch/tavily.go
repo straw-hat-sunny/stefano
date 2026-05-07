@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -190,7 +191,8 @@ func defaultTavilyParams(query string) *TavilyParams {
 		Query:             query,
 		SearchDepth:       "basic",
 		MaxResults:        5,
-		IncludeRawContent: "markdown",
+		IncludeRawContent: false,
+		IncludeAnswer:     true,
 	}
 }
 
@@ -208,8 +210,12 @@ func (c *Client) Search(ctx context.Context, query string, opts ...TavilyParamOp
 	if err != nil {
 		return nil, fmt.Errorf("websearch: encode request: %w", err)
 	}
+	urlEndpoint, err := url.JoinPath(c.baseURL, "search")
+	if err != nil {
+		return nil, fmt.Errorf("websearch: join path: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/search", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -276,6 +282,7 @@ type apiErrorBody struct {
 
 func parseAPIError(status int, body []byte) error {
 	var wrapped apiErrorBody
+	fmt.Printf("body: %s\n status: %d\n", string(body), status)
 	msg := strings.TrimSpace(string(body))
 	if err := json.Unmarshal(body, &wrapped); err == nil && wrapped.Detail.Error != "" {
 		msg = wrapped.Detail.Error
