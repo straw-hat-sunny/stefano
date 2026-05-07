@@ -1,6 +1,6 @@
 # Stefano (ai-assistant)
 
-A small full-stack app: a **Go** HTTP server embeds the **React + Vite** frontend, exposes REST APIs for health checks, selectable chat models, and in-memory chat sessions (wired to a pluggable LLM client—currently a fake implementation suitable for development).
+A small full-stack app: a **Go** HTTP server embeds the **React + Vite** frontend, exposes REST APIs for health checks, selectable chat models, and in-memory chat sessions powered by an OpenAI-compatible LLM client.
 
 ## Tech stack
 
@@ -23,6 +23,26 @@ A small full-stack app: a **Go** HTTP server embeds the **React + Vite** fronten
 - **Go** — version aligned with `go.mod` (currently 1.26.2).
 - **Node.js** — use **25.x** if you follow `.nvmrc` (`nvm use`). `web/package.json` also documents a minimum Node version for the frontend.
 - **Task** (optional but recommended) — [install Task](https://taskfile.dev/installation/) to use the `Taskfile.yml` shortcuts below.
+
+## Environment variables
+
+The backend reads environment variables from the process environment. It also attempts to load a local `.env` file when present (missing `.env` is ignored).
+
+| Variable | Default | Purpose |
+|---------|---------|---------|
+| `PORT` | `8080` | HTTP server listen port |
+| `OPENAI_BASE_URL` | `http://localhost:12434/engines/v1` | OpenAI-compatible base URL |
+| `OPENAI_MODEL` | `gemma4` | Chat completion model ID |
+| `OPENAI_API_KEY` | `dummy` | API key for the OpenAI-compatible endpoint |
+| `TAVILY_API_KEY` | _(unset)_ | Enables the `web_search` LLM tool when set |
+
+### LLM web search tool
+
+When `TAVILY_API_KEY` is set, the LLM client advertises a `web_search` function tool and executes Tavily searches during tool-calling turns.
+
+- Tool input: `{ "query": "..." }`
+- Tool output: Tavily `SearchResponse.Answer`
+- If Tavily is disabled (`TAVILY_API_KEY` unset), chat completions run without tools.
 
 ## How to run
 
@@ -89,5 +109,7 @@ go build -o bin/server ./cmd/server   # or bin/server.exe on Windows
 - `POST /api/chat` — Create a chat session.
 - `GET /api/chat/{chat_id}` — Fetch a session.
 - `POST /api/chat/{chat_id}` — Send a user message (`{"content":"..."}`); response includes the assistant reply.
+
+Message payloads include stable backend-generated IDs (`id`) so the frontend can reuse server IDs directly.
 
 Chat data is **in-memory** and is lost when the process exits.
