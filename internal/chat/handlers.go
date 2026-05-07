@@ -16,8 +16,9 @@ const maxChatBodyBytes = 1 << 16
 const chatIDPath = `/{chat_id:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}}`
 
 type chatMessageDTO struct {
-	User    string `json:"user"`
-	Content string `json:"content"`
+	ID      uuid.UUID `json:"id"`
+	User    string    `json:"user"`
+	Content string    `json:"content"`
 }
 
 // ChatResponse is the JSON shape for a chat session.
@@ -127,7 +128,7 @@ func (s *Service) HandleProcessChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func messageToDTO(m Message) chatMessageDTO {
-	return chatMessageDTO{User: m.User, Content: m.Content}
+	return chatMessageDTO{ID: m.ID, User: m.User, Content: m.Content}
 }
 
 func toChatResponse(c Chat) ChatResponse {

@@ -14,6 +14,7 @@ export interface ChatSession {
 
 /** Backend POST /api/chat — message shape (field is `user`, not `role`). */
 export type ChatApiMessageDTO = {
+  id: string;
   user: string;
   content: string;
 };

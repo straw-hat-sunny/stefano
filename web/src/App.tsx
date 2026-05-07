@@ -354,6 +354,7 @@ export default function App() {
         const m = data.message;
         if (
           !m ||
+          typeof m.id !== 'string' ||
           typeof m.content !== 'string' ||
           m.user !== 'assistant'
         ) {
@@ -361,7 +362,7 @@ export default function App() {
           return;
         }
         appendAssistantReply(sessionId, {
-          id: newMessageId(),
+          id: m.id,
           role: 'assistant',
           content: m.content,
         });

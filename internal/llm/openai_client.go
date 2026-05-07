@@ -101,11 +101,8 @@ type OpenAILLMClient struct {
 // when set; otherwise it uses defaultOpenAIBase, defaultOpenAIModel, and defaultOpenAIAPIKey.
 // The base URL is parsed to ensure it is valid before returning.
 func NewOpenAILLMClient() (*OpenAILLMClient, error) {
-	// load env variables
-	err := godotenv.Load()
-	if err != nil {
-		return nil, fmt.Errorf("llm: error loading env variables: %w", err)
-	}
+	// Load .env when present; tests and other environments may not have this file.
+	_ = godotenv.Load()
 
 	base := os.Getenv("OPENAI_BASE_URL")
 	if base == "" {

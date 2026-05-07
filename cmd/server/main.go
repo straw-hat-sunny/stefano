@@ -38,7 +38,7 @@ func main() {
 	r.PathPrefix("/").Handler(staticAndSPA(distFS))
 
 	log.Printf("listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, r))
+	log.Fatal(http.ListenAndServe("0.0.0.0:"+port, r))
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
